@@ -11,6 +11,7 @@ import sys
 import traceback
 import uuid
 from collections import defaultdict
+from typing import Any
 
 import typer
 import uvicorn
@@ -172,6 +173,40 @@ def _extract_itinerary_text(text: str) -> str:
         if re.match(r"\*\*\d+-Day|\*\*Day\s+\d", line.strip()):
             return "\n".join(lines[i:]).strip()
     return text
+
+
+def _extract_tool_output(result: Any, tool_name: str) -> str | None:
+    """Pull a sub-agent tool's raw output directly from the run's items.
+
+    The orchestrator prompt asks the model to copy the solver_agent output
+    verbatim into its own final message. Gemini's recitation safety filter
+    occasionally suppresses that echo (empty final_output) since it looks
+    like large-scale text reproduction. Reading the tool's own output
+    straight from the run trace sidesteps that entirely — no second LLM
+    call is needed to reproduce text that was already generated once.
+    """
+    call_ids: set[str] = set()
+    for item in result.new_items:
+        if getattr(item, "type", None) != "tool_call_item":
+            continue
+        raw = item.raw_item
+        name = raw.get("name") if isinstance(raw, dict) else getattr(raw, "name", None)
+        call_id = raw.get("call_id") if isinstance(raw, dict) else getattr(raw, "call_id", None)
+        if name == tool_name and call_id:
+            call_ids.add(call_id)
+
+    if not call_ids:
+        return None
+
+    for item in result.new_items:
+        if getattr(item, "type", None) != "tool_call_output_item":
+            continue
+        raw = item.raw_item
+        call_id = raw.get("call_id") if isinstance(raw, dict) else getattr(raw, "call_id", None)
+        if call_id in call_ids:
+            output = item.output
+            return output if isinstance(output, str) else str(output)
+    return None
 
 
 _CITY_COUNTRY: dict[str, str] = {
@@ -885,7 +920,10 @@ async def chat_endpoint(request: ChatRequest) -> ChatResponse:
             )
         raise
 
-    final_output = _strip_place_id_params(_extract_itinerary_text(result.final_output))
+    # Prefer the solver_agent's own tool output over the orchestrator's echo of it —
+    # Gemini's recitation filter occasionally suppresses the echo (see _extract_tool_output).
+    raw_output = _extract_tool_output(result, "solver_agent") or result.final_output
+    final_output = _strip_place_id_params(_extract_itinerary_text(raw_output))
 
     # Guard: orchestrator occasionally returns empty when conversation_agent result isn't echoed
     if not final_output.strip():
@@ -1017,7 +1055,10 @@ async def chat_stream_endpoint(request: ChatRequest) -> StreamingResponse:
                 queue.put_nowait({"type": "error", "detail": str(exc), "session_id": session_id})
                 return
 
-            final_output = _strip_place_id_params(_extract_itinerary_text(result.final_output))
+            # Prefer the solver_agent's own tool output over the orchestrator's echo of it —
+            # Gemini's recitation filter occasionally suppresses the echo (see _extract_tool_output).
+            raw_output = _extract_tool_output(result, "solver_agent") or result.final_output
+            final_output = _strip_place_id_params(_extract_itinerary_text(raw_output))
 
             # Guard: orchestrator occasionally returns empty when conversation_agent result isn't echoed
             if not final_output.strip():
@@ -1182,9 +1223,10 @@ def ask(query: str, session_id: str = "cli_session") -> None:
             typer.echo(_guardrail_message(query))
             return
 
-        _capture_itinerary(ctx, result.final_output)
+        final_output = _extract_tool_output(result, "solver_agent") or result.final_output
+        _capture_itinerary(ctx, final_output)
         ctx.save()
-        typer.echo(f"Agent:\n{result.final_output}\n" + "-" * 60)
+        typer.echo(f"Agent:\n{final_output}\n" + "-" * 60)
 
     asyncio.run(_run())
 

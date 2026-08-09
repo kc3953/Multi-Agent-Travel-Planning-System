@@ -1,5 +1,5 @@
 # Voyager — AI Travel Itinerary Optimizer
-Collaborator: Chung-Yeh Yang(cy2816), Kuan-Ting Chen(kc3953)
+Collaborator: Kuan-Ting Chen, Chung-Yeh Yang
 
 A multi-agent system that builds constraint-valid, day-by-day travel itineraries from a single natural language request — and re-optimizes them instantly when plans change.
 

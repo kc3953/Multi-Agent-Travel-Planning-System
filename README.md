@@ -3,8 +3,6 @@ Collaborator: Kuan-Ting Chen, Chung-Yeh Yang
 
 A multi-agent system that builds constraint-valid, day-by-day travel itineraries from a single natural language request — and re-optimizes them instantly when plans change.
 
-Built for the **Columbia IEOR Agentic AI for Analytics** capstone.
-
 **Live demo:** https://traveling-planning-agent-32542646336.us-central1.run.app
 
 ---
